@@ -6,6 +6,7 @@ import type { LanguageCode, ProviderTranslateOptions, TranslationUsage } from ".
 export interface OpenAITranslationProviderConfig {
   apiKey: string;
   model?: string;
+  dangerouslyAllowBrowser?: boolean;
   onUsage?: (usage: TranslationUsage) => void;
 }
 
@@ -21,7 +22,10 @@ export class OpenAITranslationProvider implements TranslationProvider {
       throw new Error("OpenAI apiKey is required");
     }
 
-    this.client = new OpenAI({ apiKey: config.apiKey });
+    this.client = new OpenAI({
+      apiKey: config.apiKey,
+      dangerouslyAllowBrowser: config.dangerouslyAllowBrowser ?? false,
+    });
     this.model = config.model ?? DEFAULT_MODEL;
     this.onUsage = config.onUsage;
   }

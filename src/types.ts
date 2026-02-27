@@ -35,6 +35,7 @@ export interface Translator {
 export interface TranslatorConfig {
   apiKey: string;
   model?: string;
+  dangerouslyAllowBrowser?: boolean;
   defaultSourceLang?: LanguageCode;
   cacheTtlMs?: number;
   maxCacheSize?: number;

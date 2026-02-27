@@ -56,6 +56,26 @@ console.log(changePassword);
 
 Important: keep `OPENAI_API_KEY` on backend/server only.
 
+## Client-Only Mode (Risky)
+
+If you still want direct browser calls to OpenAI (no backend), enable browser mode:
+
+```ts
+import { createTranslator, createIndexedDBPersistentCache } from "@prahalad-nagu/fast-translation-plugin";
+
+const translator = createTranslator({
+  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+  model: "gpt-4o-mini",
+  dangerouslyAllowBrowser: true,
+  persistentCache: createIndexedDBPersistentCache(),
+});
+```
+
+Warning:
+- This exposes your API key to users and browser devtools.
+- Use only for internal tools or short-lived POCs.
+- Preferred architecture is backend translation endpoint.
+
 ## Client-Side Persistent Cache (IndexedDB / localStorage)
 
 Use this pattern on frontend:

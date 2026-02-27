@@ -25,8 +25,13 @@ export type {
 export type { TranslationProvider } from "./providers/base.js";
 
 export function createTranslator(config: TranslatorConfig): Translator {
-  const { apiKey, model, onUsage, ...serviceConfig } = config;
+  const { apiKey, model, dangerouslyAllowBrowser, onUsage, ...serviceConfig } = config;
 
-  const provider = new OpenAITranslationProvider({ apiKey, model, onUsage });
+  const provider = new OpenAITranslationProvider({
+    apiKey,
+    model,
+    dangerouslyAllowBrowser,
+    onUsage,
+  });
   return new TranslatorService(provider, serviceConfig);
 }

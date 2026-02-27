@@ -87,4 +87,16 @@ describe("OpenAITranslationProvider", () => {
       "OpenAI apiKey is required",
     );
   });
+
+  it("forwards dangerouslyAllowBrowser option to OpenAI client", () => {
+    new OpenAITranslationProvider({
+      apiKey: "test-key",
+      dangerouslyAllowBrowser: true,
+    });
+
+    expect(MockOpenAI).toHaveBeenCalledWith({
+      apiKey: "test-key",
+      dangerouslyAllowBrowser: true,
+    });
+  });
 });
