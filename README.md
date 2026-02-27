@@ -1,37 +1,117 @@
 # Fast Translation Plugin (POC)
 
-A lightweight TypeScript translation plugin for UI microcopy using OpenAI, with caching, timeout protection, and safe fallback behavior.
+A TypeScript translation plugin for short UI text with OpenAI, in-memory caching, optional persistent browser cache, and fallback-safe behavior.
+
+## What This Package Solves
+
+- Translate short UI text like `"Login"`, `"SignUp"`, and status messages.
+- Reuse translations using cache to reduce API calls and cost.
+- Support both:
+  - server-side OpenAI usage (`createTranslator`)
+  - client-side custom provider usage (`TranslatorService` + your API)
+- Optional client-side persistent cache (IndexedDB/localStorage).
 
 ## Features
 
-- Simple raw-text API: `translateText("Login", "es")`
-- Batch API for arrays: `translateBatch(["Login", "SignUp"], "es")`
-- OpenAI-backed translation provider
+- `translateText("Login", "es")`
+- `translateBatch(["Login", "SignUp"], "es")`
+- OpenAI-backed provider with timeout and formatting-preservation prompt
 - In-memory LRU + TTL cache
-- Optional persistent cache adapter (IndexedDB/localStorage)
-- In-flight request deduplication
+- Optional persistent cache adapter (`IndexedDB`, `localStorage`, or custom)
+- In-flight deduplication for concurrent identical requests
 - Language alias normalization (`"Spanish" -> "es"`)
-- Safe fallback: returns source text if provider fails or times out
+- Safe fallback to original text when translation fails
+- Token usage callback (`onUsage`) and cache error callback (`onCacheError`)
 
-## Install in Other Apps
+## Installation
 
-For private repository usage inside your organization, install from GitHub using SSH:
+This repository is configured as private and intended for Git-based install.
+
+Install latest from main:
 
 ```bash
-npm install git+ssh://git@github.com/prahalad-nagu/fast-translation-plugin.git
+npm install git+ssh://git@github.com/prahalad-nagu/fast-translation-plugin.git#main
 ```
 
-For stable versions, install by tag:
+Install a tagged version:
 
 ```bash
 npm install git+ssh://git@github.com/prahalad-nagu/fast-translation-plugin.git#v0.1.0
 ```
 
-Notes:
-- This repo is configured with `"private": true` in `package.json`, so it is not publishable to npm by default.
-- Developers and CI need access to the GitHub repo and SSH key/token configuration.
+Install from local path:
 
-## Quick Start (Server-side)
+```bash
+npm install /Users/prahaladyr/Desktop/Codespace/language-translation
+```
+
+## Exported API
+
+### Main
+
+- `createTranslator(config: TranslatorConfig): Translator`
+- `TranslatorService`
+- `OpenAITranslationProvider`
+
+### Cache Adapters
+
+- `createIndexedDBPersistentCache(options?)`
+- `createLocalStoragePersistentCache(options?)`
+
+### Types
+
+- `TranslatorConfig`
+- `Translator`
+- `TranslateOptions`
+- `TranslationProvider`
+- `TranslationUsage`
+- `PersistentTranslationCache`
+- `TranslationCacheErrorMeta`
+- `LanguageCode`
+
+## Core Types
+
+### `TranslatorConfig`
+
+- `apiKey: string` (required)
+- `model?: string` (default: `"gpt-4o-mini"`)
+- `dangerouslyAllowBrowser?: boolean` (default: `false`)
+- `defaultSourceLang?: LanguageCode` (default: `"en"`)
+- `cacheTtlMs?: number` (default: `86400000` / 24h)
+- `maxCacheSize?: number` (default: `5000`)
+- `supportedLanguages?: LanguageCode[]`
+- `persistentCache?: PersistentTranslationCache`
+- `onError?: (err, { text, targetLang }) => void`
+- `onCacheError?: (err, { key, operation, text, targetLang }) => void`
+- `onUsage?: (usage) => void`
+
+### `TranslateOptions`
+
+- `sourceLang?: LanguageCode`
+- `timeoutMs?: number` (default: `4000`)
+- `preserveFormatting?: boolean` (default: `true`)
+- `context?: string`
+
+### `TranslationUsage`
+
+- `model`
+- `sourceLang`
+- `targetLang`
+- `promptTokens`
+- `completionTokens`
+- `totalTokens`
+
+## Supported Language Defaults
+
+Default supported languages:
+
+- `en, es, fr, de, pt, it, hi, ja, ko, ar, zh`
+
+Aliases supported out of the box include names like `English`, `Spanish`, `French`, `Chinese`, etc.
+
+## Usage Patterns
+
+### 1) Server-Side OpenAI (Recommended)
 
 ```ts
 import { createTranslator } from "@prahalad-nagu/fast-translation-plugin";
@@ -39,26 +119,20 @@ import { createTranslator } from "@prahalad-nagu/fast-translation-plugin";
 const translator = createTranslator({
   apiKey: process.env.OPENAI_API_KEY!,
   model: "gpt-4o-mini",
-  onUsage: (usage) => {
-    console.log("usage", usage);
-  },
+  onUsage: (usage) => console.log("usage", usage),
+  onError: (err, meta) => console.error("translation failed", meta, err.message),
 });
 
-const login = await translator.translateText("Login", "es");
-const changePassword = await translator.translateText(
-  "Please change the password",
-  "es",
+const loginEs = await translator.translateText("Login", "es");
+const batch = await translator.translateBatch(
+  ["Login", "SignUp", "Please change the password"],
+  "fr",
 );
-
-console.log(login); // Iniciar sesión
-console.log(changePassword);
 ```
 
-Important: keep `OPENAI_API_KEY` on backend/server only.
+### 2) Client-Only OpenAI (Risky)
 
-## Client-Only Mode (Risky)
-
-If you still want direct browser calls to OpenAI (no backend), enable browser mode:
+This enables direct browser-to-OpenAI usage.
 
 ```ts
 import { createTranslator, createIndexedDBPersistentCache } from "@prahalad-nagu/fast-translation-plugin";
@@ -72,16 +146,14 @@ const translator = createTranslator({
 ```
 
 Warning:
-- This exposes your API key to users and browser devtools.
+
+- Your API key is exposed to end users/devtools.
 - Use only for internal tools or short-lived POCs.
-- Preferred architecture is backend translation endpoint.
+- Prefer a backend proxy in production.
 
-## Client-Side Persistent Cache (IndexedDB / localStorage)
+### 3) Client + Backend Translation Endpoint (Best Client Architecture)
 
-Use this pattern on frontend:
-- call your backend translation API
-- cache translated strings in browser storage
-- on repeat requests, return from storage without another API call
+Frontend uses `TranslatorService` with a custom provider that calls your backend:
 
 ```ts
 import {
@@ -90,143 +162,128 @@ import {
   type TranslationProvider,
 } from "@prahalad-nagu/fast-translation-plugin";
 
-const apiProvider: TranslationProvider = {
+const provider: TranslationProvider = {
   async translate(text, sourceLang, targetLang) {
-    const response = await fetch("/api/translate", {
+    const res = await fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, sourceLang, targetLang }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Translation API failed: ${response.status}`);
+    if (!res.ok) {
+      throw new Error(`Translation API failed: ${res.status}`);
     }
 
-    const body = (await response.json()) as { translatedText: string };
+    const body = (await res.json()) as { translatedText: string };
     return body.translatedText;
   },
 };
 
-const translator = new TranslatorService(apiProvider, {
+const translator = new TranslatorService(provider, {
   persistentCache: createIndexedDBPersistentCache({
     dbName: "my-app-translations",
     storeName: "ui-text",
   }),
   onCacheError: (err, meta) => {
-    console.warn("cache issue", meta, err.message);
+    console.warn("cache error", meta, err.message);
   },
 });
-
-const loginText = await translator.translateText("Login", "es");
 ```
 
-If you want simpler storage:
+## Caching Behavior (Exact Flow)
+
+For each `translateText` call:
+
+1. Validate input and normalize language codes.
+2. Check in-memory LRU cache.
+3. If configured, check persistent cache (`persistentCache.get`).
+4. If not cached, call provider.
+5. Save successful result to:
+   - in-memory cache
+   - persistent cache (`persistentCache.set`)
+6. If provider fails, return original source text.
+
+Additional behavior:
+
+- Concurrent identical requests are deduplicated via in-flight map.
+- Batch translation deduplicates repeated text values in the same batch.
+
+## Persistent Cache Adapters
+
+### IndexedDB
+
+```ts
+import { createIndexedDBPersistentCache } from "@prahalad-nagu/fast-translation-plugin";
+
+const cache = createIndexedDBPersistentCache({
+  dbName: "fast-translation-plugin",
+  storeName: "translations",
+  version: 1,
+});
+```
+
+### LocalStorage
 
 ```ts
 import { createLocalStoragePersistentCache } from "@prahalad-nagu/fast-translation-plugin";
-// persistentCache: createLocalStoragePersistentCache({ keyPrefix: "my-app:" })
-```
 
-## Batch Translation (Array Input)
-
-```ts
-const translated = await translator.translateBatch(
-  ["Login", "SignUp", "Please change the password", "Waiting for approval"],
-  "es",
-);
-```
-
-Behavior:
-- Returns results in original order.
-- Deduplicates repeated input strings.
-- Falls back to source text if translation fails.
-- Current implementation calls provider per unique string (not a single model call for the whole array).
-
-## API
-
-### `createTranslator(config)`
-
-Creates a translator using OpenAI as the provider.
-
-### `translateText(text, targetLang, options?)`
-
-Translates one string.
-
-- `text`: source text (usually English UI copy)
-- `targetLang`: ISO code or alias, e.g. `"es"`, `"Spanish"`
-- `options.sourceLang`: defaults to `"en"`
-- `options.timeoutMs`: defaults to `4000`
-- `options.preserveFormatting`: defaults to `true`
-- `options.context`: optional domain hint
-
-### `translateBatch(texts, targetLang, options?)`
-
-Translates multiple strings and returns results in original order.
-
-### `onUsage` logger
-
-Pass `onUsage` in `createTranslator` config to log token usage per translation request:
-
-```ts
-const translator = createTranslator({
-  apiKey: process.env.OPENAI_API_KEY!,
-  onUsage: (usage) => {
-    // { model, sourceLang, targetLang, promptTokens, completionTokens, totalTokens }
-    console.log(usage);
-  },
+const cache = createLocalStoragePersistentCache({
+  keyPrefix: "fast-translation:",
 });
 ```
 
-### `persistentCache` and `onCacheError`
+### Custom Cache Adapter
 
-`persistentCache` lets you plug client-side storage (IndexedDB/localStorage) so repeated translations are served from storage before API.
+```ts
+import type { PersistentTranslationCache } from "@prahalad-nagu/fast-translation-plugin";
 
-`onCacheError` is optional and called when cache read/write fails; translation still continues.
+const cache: PersistentTranslationCache = {
+  async get(key) {
+    return undefined;
+  },
+  async set(key, value) {
+    // store value
+  },
+};
+```
 
-## OpenAI Pricing
+## OpenAI Pricing (For This Plugin)
 
-OpenAI API is generally paid (not permanently free). Cost is token-based and depends on model and usage volume.
+The default model in this plugin is `gpt-4o-mini`.
 
-Check latest pricing:
+From OpenAI pricing page (verified on **February 27, 2026**):
+
+- Input: **$0.15 / 1M tokens**
+- Cached input: **$0.075 / 1M tokens**
+- Output: **$0.60 / 1M tokens**
+
+Source:
+
 - https://platform.openai.com/pricing
 
-For this plugin use case (short UI text), cost is typically low, especially with caching and deduplication.
+Note:
 
-## Defaults
+- Pricing can change; always verify on the pricing page.
+- Exact remaining account credit is not available from this plugin call flow.
+- Use OpenAI Billing dashboard for exact remaining balance.
 
-- Supported languages: `en, es, fr, de, pt, it, hi, ja, ko, ar, zh`
-- Cache TTL: 24 hours
-- Cache size: 5000 entries
-- Model: `gpt-4o-mini`
+## Smoke Test Script
 
-## Development
+A local smoke script exists at `scripts/smoke.ts`.
 
-```bash
-npm test
-npm run build
-```
-
-## Local Testing
-
-Run automated tests:
-
-```bash
-npm test
-```
-
-Run a real API smoke test (requires `OPENAI_API_KEY`):
+Run:
 
 ```bash
 OPENAI_API_KEY=your_key npm run smoke
 ```
 
-Pass custom target language + texts:
+With custom language/texts:
 
 ```bash
 OPENAI_API_KEY=your_key npm run smoke -- fr "Login" "SignUp"
 ```
 
-Smoke logger supports optional cost/budget env vars:
+Optional envs for cost estimation in smoke output:
 
 ```bash
 OPENAI_PRICE_INPUT_PER_1M=0.15
@@ -234,18 +291,74 @@ OPENAI_PRICE_OUTPUT_PER_1M=0.60
 OPENAI_CREDIT_BUDGET_USD=20
 ```
 
-Note: exact remaining OpenAI account credits are not returned by this API key flow.
-Use OpenAI Billing dashboard for exact balance.
-Pending token count is also not exact upfront; actual token usage is returned after each response.
+## Error Handling and Fallbacks
 
-## Environment
+- Provider failure: returns original text and triggers `onError`.
+- Persistent cache read/write failure: translation continues and triggers `onCacheError`.
+- Invalid language code: throws explicit validation error.
 
-Create a `.env` file from `.env.example`:
+## Common Troubleshooting
+
+### 1) Browser error: `OpenAIError: running in a browser-like environment`
+
+Cause: OpenAI client used in browser without browser opt-in.
+
+Fix:
+
+- Set `dangerouslyAllowBrowser: true` (POC only), or
+- Use backend endpoint pattern.
+
+### 2) Vite error: `node:crypto has been externalized`
+
+Cause: Old plugin build using Node crypto.
+
+Fix:
+
+- Reinstall latest plugin build/tag.
+- Current implementation uses browser-safe hashing.
+
+### 3) Always getting English text back
+
+Cause: Provider call failed and fallback returned source text.
+
+Fix:
+
+- Add `onError` logger to inspect root cause (key, quota, model access, timeout).
+
+### 4) Git tag install error: `git reference could not be found`
+
+Cause: Tag not pushed to remote.
+
+Fix:
 
 ```bash
-cp .env.example .env
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
 ```
 
-Set:
+## Security Guidance
 
-- `OPENAI_API_KEY=your_api_key`
+- Never commit API keys.
+- Keep `.env` out of git.
+- Prefer server-side key usage.
+- If forced into client-only mode, use restricted/rotated keys and treat as temporary.
+
+## Development
+
+```bash
+npm install
+npm test
+npm run build
+```
+
+## Project Scripts
+
+- `npm run build` - compile TypeScript to `dist/`
+- `npm test` - run vitest tests
+- `npm run test:watch` - watch-mode tests
+- `npm run smoke` - live translation smoke test
+
+## Repository Notes
+
+- Package name: `@prahalad-nagu/fast-translation-plugin`
+- Repo is currently configured as private (`"private": true` in `package.json`).
