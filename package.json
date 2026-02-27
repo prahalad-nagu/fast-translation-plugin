@@ -2,6 +2,7 @@
   "name": "@prahalad-nagu/fast-translation-plugin",
   "version": "0.1.0",
   "description": "Fast POC translation plugin for UI microcopy using OpenAI",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -37,9 +38,6 @@
     "url": "https://github.com/prahalad-nagu/fast-translation-plugin/issues"
   },
   "homepage": "https://github.com/prahalad-nagu/fast-translation-plugin#readme",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "openai": "^4.104.0"
   },

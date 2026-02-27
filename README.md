@@ -14,13 +14,13 @@ A lightweight TypeScript translation module for UI microcopy using OpenAI, with 
 ## Install
 
 ```bash
-npm install @prahalad-nagu/fast-translation-plugin
+npm install git+https://github.com/prahalad-nagu/fast-translation-plugin.git
 ```
 
-Or install directly from GitHub:
+For private access with SSH:
 
 ```bash
-npm install git+https://github.com/prahalad-nagu/fast-translation-plugin.git
+npm install git+ssh://git@github.com/prahalad-nagu/fast-translation-plugin.git
 ```
 
 ## Quick Start
@@ -78,14 +78,9 @@ npm test
 npm run build
 ```
 
-## Publish
+## Private Repository Usage
 
-```bash
-npm login
-npm test
-npm run build
-npm publish --access public
-```
+This package is configured with `"private": true` and is intended for private GitHub usage inside your organization.
 
 ## Environment
 
