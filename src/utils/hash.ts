@@ -1,5 +1,11 @@
-import { createHash } from "node:crypto";
-
 export function hashKey(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
+  // FNV-1a 32-bit hash to avoid Node-only crypto APIs in browser bundles.
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
