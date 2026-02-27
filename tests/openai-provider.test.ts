@@ -24,13 +24,20 @@ describe("OpenAITranslationProvider", () => {
   });
 
   it("sends translation prompt and returns normalized text", async () => {
+    const onUsage = vi.fn();
     mockCreate.mockResolvedValue({
       choices: [{ message: { content: '"Iniciar sesión"' } }],
+      usage: {
+        prompt_tokens: 32,
+        completion_tokens: 4,
+        total_tokens: 36,
+      },
     });
 
     const provider = new OpenAITranslationProvider({
       apiKey: "test-key",
       model: "gpt-4o-mini",
+      onUsage,
     });
 
     const result = await provider.translate("Login", "en", "es", {
@@ -50,6 +57,14 @@ describe("OpenAITranslationProvider", () => {
     expect(body.messages[1].content).toContain("Target language: es");
     expect(body.messages[1].content).toContain("Text: Login");
     expect(requestOptions.signal).toBeDefined();
+    expect(onUsage).toHaveBeenCalledWith({
+      model: "gpt-4o-mini",
+      sourceLang: "en",
+      targetLang: "es",
+      promptTokens: 32,
+      completionTokens: 4,
+      totalTokens: 36,
+    });
   });
 
   it("throws when provider returns empty content", async () => {

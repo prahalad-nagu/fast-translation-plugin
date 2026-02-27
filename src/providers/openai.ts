@@ -1,11 +1,12 @@
 import OpenAI from "openai";
 
 import type { TranslationProvider } from "./base.js";
-import type { LanguageCode, ProviderTranslateOptions } from "../types.js";
+import type { LanguageCode, ProviderTranslateOptions, TranslationUsage } from "../types.js";
 
 export interface OpenAITranslationProviderConfig {
   apiKey: string;
   model?: string;
+  onUsage?: (usage: TranslationUsage) => void;
 }
 
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -13,6 +14,7 @@ const DEFAULT_MODEL = "gpt-4o-mini";
 export class OpenAITranslationProvider implements TranslationProvider {
   private readonly client: OpenAI;
   private readonly model: string;
+  private readonly onUsage?: (usage: TranslationUsage) => void;
 
   constructor(config: OpenAITranslationProviderConfig) {
     if (!config.apiKey || !config.apiKey.trim()) {
@@ -21,6 +23,7 @@ export class OpenAITranslationProvider implements TranslationProvider {
 
     this.client = new OpenAI({ apiKey: config.apiKey });
     this.model = config.model ?? DEFAULT_MODEL;
+    this.onUsage = config.onUsage;
   }
 
   async translate(
@@ -66,6 +69,17 @@ export class OpenAITranslationProvider implements TranslationProvider {
       const translated = response.choices?.[0]?.message?.content?.trim();
       if (!translated) {
         throw new Error("OpenAI returned an empty translation");
+      }
+
+      if (response.usage && this.onUsage) {
+        this.onUsage({
+          model: this.model,
+          sourceLang: String(sourceLang),
+          targetLang: String(targetLang),
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+        });
       }
 
       return stripMatchingQuotes(translated);

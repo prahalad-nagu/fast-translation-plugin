@@ -39,11 +39,35 @@ export interface TranslatorConfig {
   cacheTtlMs?: number;
   maxCacheSize?: number;
   supportedLanguages?: LanguageCode[];
+  persistentCache?: PersistentTranslationCache;
   onError?: (err: Error, meta: { text: string; targetLang: string }) => void;
+  onCacheError?: (err: Error, meta: TranslationCacheErrorMeta) => void;
+  onUsage?: (usage: TranslationUsage) => void;
 }
 
 export interface ProviderTranslateOptions {
   timeoutMs: number;
   preserveFormatting: boolean;
   context?: string;
+}
+
+export interface TranslationUsage {
+  model: string;
+  sourceLang: string;
+  targetLang: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface PersistentTranslationCache {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+}
+
+export interface TranslationCacheErrorMeta {
+  key: string;
+  operation: "get" | "set";
+  text: string;
+  targetLang: string;
 }
