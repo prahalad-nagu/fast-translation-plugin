@@ -17,6 +17,32 @@ export interface TranslateOptions {
   timeoutMs?: number;
   preserveFormatting?: boolean;
   context?: string;
+  tenantId?: string;
+}
+
+export type RuntimeEnvironment = "dev" | "prod";
+
+export type TranslationOrigin =
+  | "memory_cache"
+  | "persistent_cache"
+  | "distributed_cache"
+  | "override"
+  | "stored"
+  | "provider"
+  | "same_language"
+  | "fallback";
+
+export interface TranslationResult {
+  sourceText: string;
+  translatedText: string;
+  sourceLang: string;
+  targetLang: string;
+  context: string;
+  tenantId?: string;
+  origin: TranslationOrigin;
+  fromOverride: boolean;
+  fromStored: boolean;
+  fromFallback: boolean;
 }
 
 export interface Translator {
@@ -25,6 +51,11 @@ export interface Translator {
     targetLang: LanguageCode,
     options?: TranslateOptions,
   ): Promise<string>;
+  translateTextDetailed(
+    text: string,
+    targetLang: LanguageCode,
+    options?: TranslateOptions,
+  ): Promise<TranslationResult>;
   translateBatch(
     texts: string[],
     targetLang: LanguageCode,
@@ -66,9 +97,24 @@ export interface PersistentTranslationCache {
   set(key: string, value: string): Promise<void>;
 }
 
+export interface DistributedTranslationCacheEntry {
+  text: string;
+  fromOverride?: boolean;
+  fromStored?: boolean;
+  fromFallback?: boolean;
+}
+
+export interface DistributedTranslationCache {
+  get(key: string): Promise<DistributedTranslationCacheEntry | undefined>;
+  set(key: string, value: DistributedTranslationCacheEntry): Promise<void>;
+  delete?(key: string): Promise<void>;
+  close?(): Promise<void>;
+}
+
 export interface TranslationCacheErrorMeta {
   key: string;
-  operation: "get" | "set";
+  operation: "get" | "set" | "delete";
+  cacheLayer?: "persistent" | "distributed";
   text: string;
   targetLang: string;
 }

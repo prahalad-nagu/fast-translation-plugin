@@ -1,7 +1,7 @@
 {
   "name": "@prahalad-nagu/fast-translation-plugin",
   "version": "0.1.0",
-  "description": "Fast POC translation plugin for UI microcopy using OpenAI",
+  "description": "Production-ready translation platform core for UI microcopy using OpenAI",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -40,10 +40,33 @@
   },
   "homepage": "https://github.com/prahalad-nagu/fast-translation-plugin#readme",
   "dependencies": {
+    "knex": "^3.1.0",
     "openai": "^4.104.0"
+  },
+  "peerDependencies": {
+    "mysql2": "^3.0.0",
+    "pg": "^8.0.0",
+    "redis": "^4.6.0",
+    "sqlite3": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "mysql2": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "redis": {
+      "optional": true
+    },
+    "sqlite3": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "redis": "^4.7.0",
+    "sqlite3": "^5.1.7",
     "tsx": "^4.20.5",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"

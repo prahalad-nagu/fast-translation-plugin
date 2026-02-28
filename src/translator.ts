@@ -3,6 +3,7 @@ import type { TranslationProvider } from "./providers/base.js";
 import type {
   LanguageCode,
   TranslateOptions,
+  TranslationResult,
   Translator,
   TranslatorConfig,
 } from "./types.js";
@@ -28,7 +29,7 @@ export class TranslatorService implements Translator {
   private readonly persistentCache?: TranslatorConfig["persistentCache"];
   private readonly onError?: (err: Error, meta: { text: string; targetLang: string }) => void;
   private readonly onCacheError?: TranslatorConfig["onCacheError"];
-  private readonly inFlight = new Map<string, Promise<string>>();
+  private readonly inFlight = new Map<string, Promise<TranslationResult>>();
 
   constructor(provider: TranslationProvider, config: TranslatorServiceConfig = {}) {
     this.provider = provider;
@@ -57,12 +58,17 @@ export class TranslatorService implements Translator {
     targetLang: LanguageCode,
     options?: TranslateOptions,
   ): Promise<string> {
+    const result = await this.translateTextDetailed(text, targetLang, options);
+    return result.translatedText;
+  }
+
+  async translateTextDetailed(
+    text: string,
+    targetLang: LanguageCode,
+    options?: TranslateOptions,
+  ): Promise<TranslationResult> {
     if (typeof text !== "string") {
       throw new Error("text must be a string");
-    }
-
-    if (text.length === 0) {
-      return text;
     }
 
     const sourceLang = normalizeLanguageCode(
@@ -74,8 +80,16 @@ export class TranslatorService implements Translator {
     assertSupportedLanguage(sourceLang, this.supportedLanguages, "source language");
     assertSupportedLanguage(normalizedTargetLang, this.supportedLanguages, "target language");
 
-    if (sourceLang === normalizedTargetLang) {
-      return text;
+    if (text.length === 0 || sourceLang === normalizedTargetLang) {
+      return this.buildResult({
+        sourceText: text,
+        translatedText: text,
+        sourceLang,
+        targetLang: normalizedTargetLang,
+        context: options?.context?.trim() ?? "",
+        origin: "same_language",
+        fromFallback: false,
+      });
     }
 
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -84,12 +98,20 @@ export class TranslatorService implements Translator {
     }
 
     const preserveFormatting = options?.preserveFormatting ?? true;
-    const context = options?.context?.trim();
+    const context = options?.context?.trim() ?? "";
 
-    const cacheKey = hashKey(`${sourceLang}|${normalizedTargetLang}|${context ?? ""}|${text}`);
+    const cacheKey = hashKey(`${sourceLang}|${normalizedTargetLang}|${context}|${text}`);
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
-      return cached;
+      return this.buildResult({
+        sourceText: text,
+        translatedText: cached,
+        sourceLang,
+        targetLang: normalizedTargetLang,
+        context,
+        origin: "memory_cache",
+        fromFallback: false,
+      });
     }
 
     const existingRequest = this.inFlight.get(cacheKey);
@@ -142,17 +164,33 @@ export class TranslatorService implements Translator {
     targetLang: string,
     options: { timeoutMs: number; preserveFormatting: boolean; context?: string },
     cacheKey: string,
-  ): Promise<string> {
+  ): Promise<TranslationResult> {
     try {
       const translated = await this.provider.translate(text, sourceLang, targetLang, options);
       this.cache.set(cacheKey, translated);
       await this.setPersistentCacheValue(cacheKey, translated, text, targetLang);
-      return translated;
+      return this.buildResult({
+        sourceText: text,
+        translatedText: translated,
+        sourceLang,
+        targetLang,
+        context: options.context ?? "",
+        origin: "provider",
+        fromFallback: false,
+      });
     } catch (error) {
       if (this.onError) {
         this.onError(asError(error), { text, targetLang });
       }
-      return text;
+      return this.buildResult({
+        sourceText: text,
+        translatedText: text,
+        sourceLang,
+        targetLang,
+        context: options.context ?? "",
+        origin: "fallback",
+        fromFallback: true,
+      });
     }
   }
 
@@ -162,11 +200,19 @@ export class TranslatorService implements Translator {
     targetLang: string,
     options: { timeoutMs: number; preserveFormatting: boolean; context?: string },
     cacheKey: string,
-  ): Promise<string> {
+  ): Promise<TranslationResult> {
     const persistentCached = await this.getPersistentCacheValue(cacheKey, text, targetLang);
     if (persistentCached !== undefined) {
       this.cache.set(cacheKey, persistentCached);
-      return persistentCached;
+      return this.buildResult({
+        sourceText: text,
+        translatedText: persistentCached,
+        sourceLang,
+        targetLang,
+        context: options.context ?? "",
+        origin: "persistent_cache",
+        fromFallback: false,
+      });
     }
 
     return this.translateWithFallback(text, sourceLang, targetLang, options, cacheKey);
@@ -187,6 +233,7 @@ export class TranslatorService implements Translator {
       this.reportCacheError(error, {
         key: cacheKey,
         operation: "get",
+        cacheLayer: "persistent",
         text,
         targetLang,
       });
@@ -210,16 +257,42 @@ export class TranslatorService implements Translator {
       this.reportCacheError(error, {
         key: cacheKey,
         operation: "set",
+        cacheLayer: "persistent",
         text,
         targetLang,
       });
     }
   }
 
-  private reportCacheError(error: unknown, meta: NonNullable<Parameters<NonNullable<TranslatorConfig["onCacheError"]>>[1]>): void {
+  private reportCacheError(
+    error: unknown,
+    meta: NonNullable<Parameters<NonNullable<TranslatorConfig["onCacheError"]>>[1]>,
+  ): void {
     if (this.onCacheError) {
       this.onCacheError(asError(error), meta);
     }
+  }
+
+  private buildResult(input: {
+    sourceText: string;
+    translatedText: string;
+    sourceLang: string;
+    targetLang: string;
+    context: string;
+    origin: TranslationResult["origin"];
+    fromFallback: boolean;
+  }): TranslationResult {
+    return {
+      sourceText: input.sourceText,
+      translatedText: input.translatedText,
+      sourceLang: input.sourceLang,
+      targetLang: input.targetLang,
+      context: input.context,
+      origin: input.origin,
+      fromOverride: false,
+      fromStored: false,
+      fromFallback: input.fromFallback,
+    };
   }
 }
 

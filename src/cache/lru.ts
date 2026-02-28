@@ -63,4 +63,8 @@ export class LruTtlCache<K, V> {
   clear(): void {
     this.entries.clear();
   }
+
+  delete(key: K): void {
+    this.entries.delete(key);
+  }
 }

@@ -1,117 +1,159 @@
-# Fast Translation Plugin (POC)
+# Fast Translation Plugin
 
-A TypeScript translation plugin for short UI text with OpenAI, in-memory caching, optional persistent browser cache, and fallback-safe behavior.
+A TypeScript translation package for UI microcopy with:
+- OpenAI translation provider
+- in-memory cache + optional persistent cache
+- new scalable server mode with SQL persistence and user override management
+- production-safe server defaults + migration scaffolding
 
-## What This Package Solves
-
-- Translate short UI text like `"Login"`, `"SignUp"`, and status messages.
-- Reuse translations using cache to reduce API calls and cost.
-- Support both:
-  - server-side OpenAI usage (`createTranslator`)
-  - client-side custom provider usage (`TranslatorService` + your API)
-- Optional client-side persistent cache (IndexedDB/localStorage).
-
-## Features
+## Highlights
 
 - `translateText("Login", "es")`
+- `translateTextDetailed("Login", "es")` with origin/fallback metadata
 - `translateBatch(["Login", "SignUp"], "es")`
-- OpenAI-backed provider with timeout and formatting-preservation prompt
-- In-memory LRU + TTL cache
-- Optional persistent cache adapter (`IndexedDB`, `localStorage`, or custom)
-- In-flight deduplication for concurrent identical requests
-- Language alias normalization (`"Spanish" -> "es"`)
-- Safe fallback to original text when translation fails
-- Token usage callback (`onUsage`) and cache error callback (`onCacheError`)
+- Built-in OpenAI provider (`createTranslator`)
+- Scalable server translator with DB persistence (`createServerTranslator`)
+- Override CRUD for user-managed renamed translations
+- Optional tenant-aware server mode
+- Optional Redis distributed cache for multi-instance deployments
+- IndexedDB/localStorage adapters for client caching
 
 ## Installation
 
-This repository is configured as private and intended for Git-based install.
-
-Install latest from main:
+This repo is private and intended for Git install.
 
 ```bash
 npm install git+ssh://git@github.com/prahalad-nagu/fast-translation-plugin.git#main
 ```
 
-Install a tagged version:
+Tagged install:
 
 ```bash
 npm install git+ssh://git@github.com/prahalad-nagu/fast-translation-plugin.git#v0.1.0
 ```
 
-Install from local path:
+## Exports
 
-```bash
-npm install /Users/prahaladyr/Desktop/Codespace/language-translation
+- `createTranslator(config)`
+- `createServerTranslator(config)`
+- `TranslatorService`
+- `ServerTranslatorService`
+- `OpenAITranslationProvider`
+- `createRedisDistributedCache(...)`
+- `createIndexedDBPersistentCache(...)`
+- `createLocalStoragePersistentCache(...)`
+
+Types:
+
+- `TranslatorConfig`, `ServerTranslatorConfig`
+- `Translator`, `ServerTranslator`
+- `TranslateOptions`, `TranslationResult`, `ServerTranslationResult`
+- `OverrideUpsertInput`, `OverrideQuery`, `OverrideRecord`, `ListOverridesFilter`
+- `PersistentTranslationCache`, `DistributedTranslationCache`, `TranslationUsage`, `TranslationCacheErrorMeta`
+
+## 1) Scalable Server Mode (Recommended for production)
+
+Use `createServerTranslator(...)` for DB-backed translation + override CRUD.
+
+```ts
+import {
+  createRedisDistributedCache,
+  createServerTranslator,
+} from "@prahalad-nagu/fast-translation-plugin";
+
+const distributedCache = createRedisDistributedCache({
+  url: process.env.REDIS_URL!,
+  ttlSeconds: 86400,
+});
+
+const translator = createServerTranslator({
+  apiKey: process.env.OPENAI_API_KEY!,
+  model: "gpt-4o-mini",
+  environment: "prod",
+  distributedCache,
+  closeDistributedCacheOnShutdown: true,
+  database: {
+    type: "postgres",
+    connectionString: process.env.DATABASE_URL!,
+    autoCreateTables: false,
+    pool: {
+      min: 2,
+      max: 20,
+      acquireTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
+    },
+    tableNames: {
+      translations: "translation_records",
+      overrides: "translation_overrides",
+    },
+    tenancy: {
+      enabled: false,
+      requireTenantId: false,
+      defaultTenantId: "__global__",
+    },
+  },
+});
+
+await translator.init();
+
+const detailed = await translator.translateTextDetailed("Login", "es");
+console.log(detailed.origin, detailed.fromFallback);
+
+await translator.setOverride({
+  sourceText: "Login",
+  targetLang: "es",
+  overrideText: "Acceder",
+  updatedBy: "admin@acme",
+});
+
+const effective = await translator.translateText("Login", "es"); // "Acceder"
+
+await translator.close();
 ```
 
-## Exported API
+### Server lookup order
 
-### Main
+For each server translation request:
 
-- `createTranslator(config: TranslatorConfig): Translator`
-- `TranslatorService`
-- `OpenAITranslationProvider`
+1. Normalize input + tenant key
+2. Check memory cache
+3. Check distributed cache (if configured)
+4. Check overrides table
+5. Check translations table
+6. Call AI provider on miss
+7. Persist translation row
+8. Return translation
 
-### Cache Adapters
+If AI/provider fails, it returns source text and calls `onError`.
 
-- `createIndexedDBPersistentCache(options?)`
-- `createLocalStoragePersistentCache(options?)`
+Note: this package does **not** create databases (`CREATE DATABASE`). It only checks/creates tables in an existing database during `init()`.
 
-### Types
+### Override CRUD methods
 
-- `TranslatorConfig`
-- `Translator`
-- `TranslateOptions`
-- `TranslationProvider`
-- `TranslationUsage`
-- `PersistentTranslationCache`
-- `TranslationCacheErrorMeta`
-- `LanguageCode`
+`ServerTranslator` adds:
 
-## Core Types
+- `init(): Promise<void>`
+- `close(): Promise<void>`
+- `setOverride(input)`
+- `getOverride(query)`
+- `deleteOverride(query)`
+- `listOverrides(filter?)`
 
-### `TranslatorConfig`
+### Tenancy behavior
 
-- `apiKey: string` (required)
-- `model?: string` (default: `"gpt-4o-mini"`)
-- `dangerouslyAllowBrowser?: boolean` (default: `false`)
-- `defaultSourceLang?: LanguageCode` (default: `"en"`)
-- `cacheTtlMs?: number` (default: `86400000` / 24h)
-- `maxCacheSize?: number` (default: `5000`)
-- `supportedLanguages?: LanguageCode[]`
-- `persistentCache?: PersistentTranslationCache`
-- `onError?: (err, { text, targetLang }) => void`
-- `onCacheError?: (err, { key, operation, text, targetLang }) => void`
-- `onUsage?: (usage) => void`
+Defaults are single-tenant:
 
-### `TranslateOptions`
+- `tenancy.enabled: false`
+- tenant key defaults to `"__global__"`
 
-- `sourceLang?: LanguageCode`
-- `timeoutMs?: number` (default: `4000`)
-- `preserveFormatting?: boolean` (default: `true`)
-- `context?: string`
+If `tenancy.enabled: true`:
 
-### `TranslationUsage`
+- provide `tenantId` in `TranslateOptions` / override inputs
+- if `requireTenantId: true`, missing tenantId throws
 
-- `model`
-- `sourceLang`
-- `targetLang`
-- `promptTokens`
-- `completionTokens`
-- `totalTokens`
+## 2) Standard OpenAI Mode (existing behavior)
 
-## Supported Language Defaults
-
-Default supported languages:
-
-- `en, es, fr, de, pt, it, hi, ja, ko, ar, zh`
-
-Aliases supported out of the box include names like `English`, `Spanish`, `French`, `Chinese`, etc.
-
-## Usage Patterns
-
-### 1) Server-Side OpenAI (Recommended)
+`createTranslator(...)` keeps current behavior and is useful for non-DB flows.
 
 ```ts
 import { createTranslator } from "@prahalad-nagu/fast-translation-plugin";
@@ -119,41 +161,15 @@ import { createTranslator } from "@prahalad-nagu/fast-translation-plugin";
 const translator = createTranslator({
   apiKey: process.env.OPENAI_API_KEY!,
   model: "gpt-4o-mini",
-  onUsage: (usage) => console.log("usage", usage),
-  onError: (err, meta) => console.error("translation failed", meta, err.message),
+  onUsage: (usage) => console.log(usage),
 });
 
-const loginEs = await translator.translateText("Login", "es");
-const batch = await translator.translateBatch(
-  ["Login", "SignUp", "Please change the password"],
-  "fr",
-);
+const text = await translator.translateText("Waiting for approval", "fr");
 ```
 
-### 2) Client-Only OpenAI (Risky)
+## 3) Client with backend endpoint (recommended client architecture)
 
-This enables direct browser-to-OpenAI usage.
-
-```ts
-import { createTranslator, createIndexedDBPersistentCache } from "@prahalad-nagu/fast-translation-plugin";
-
-const translator = createTranslator({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-  model: "gpt-4o-mini",
-  dangerouslyAllowBrowser: true,
-  persistentCache: createIndexedDBPersistentCache(),
-});
-```
-
-Warning:
-
-- Your API key is exposed to end users/devtools.
-- Use only for internal tools or short-lived POCs.
-- Prefer a backend proxy in production.
-
-### 3) Client + Backend Translation Endpoint (Best Client Architecture)
-
-Frontend uses `TranslatorService` with a custom provider that calls your backend:
+Use `TranslatorService` with a custom provider that calls your backend `/api/translate`.
 
 ```ts
 import {
@@ -169,89 +185,143 @@ const provider: TranslationProvider = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, sourceLang, targetLang }),
     });
-
-    if (!res.ok) {
-      throw new Error(`Translation API failed: ${res.status}`);
-    }
-
-    const body = (await res.json()) as { translatedText: string };
+    const body = await res.json();
     return body.translatedText;
   },
 };
 
 const translator = new TranslatorService(provider, {
-  persistentCache: createIndexedDBPersistentCache({
-    dbName: "my-app-translations",
-    storeName: "ui-text",
-  }),
-  onCacheError: (err, meta) => {
-    console.warn("cache error", meta, err.message);
-  },
+  persistentCache: createIndexedDBPersistentCache(),
 });
 ```
 
-## Caching Behavior (Exact Flow)
-
-For each `translateText` call:
-
-1. Validate input and normalize language codes.
-2. Check in-memory LRU cache.
-3. If configured, check persistent cache (`persistentCache.get`).
-4. If not cached, call provider.
-5. Save successful result to:
-   - in-memory cache
-   - persistent cache (`persistentCache.set`)
-6. If provider fails, return original source text.
-
-Additional behavior:
-
-- Concurrent identical requests are deduplicated via in-flight map.
-- Batch translation deduplicates repeated text values in the same batch.
-
-## Persistent Cache Adapters
-
-### IndexedDB
+## 4) Client-only OpenAI mode (risky)
 
 ```ts
-import { createIndexedDBPersistentCache } from "@prahalad-nagu/fast-translation-plugin";
-
-const cache = createIndexedDBPersistentCache({
-  dbName: "fast-translation-plugin",
-  storeName: "translations",
-  version: 1,
+const translator = createTranslator({
+  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true,
 });
 ```
 
-### LocalStorage
+Warning: this exposes API keys in browser environments.
 
-```ts
-import { createLocalStoragePersistentCache } from "@prahalad-nagu/fast-translation-plugin";
+## API Reference
 
-const cache = createLocalStoragePersistentCache({
-  keyPrefix: "fast-translation:",
-});
-```
+## `translateTextDetailed(text, targetLang, options?)`
 
-### Custom Cache Adapter
+Returns `TranslationResult` metadata:
 
-```ts
-import type { PersistentTranslationCache } from "@prahalad-nagu/fast-translation-plugin";
+- `translatedText`
+- `origin`: `memory_cache | persistent_cache | distributed_cache | override | stored | provider | same_language | fallback`
+- `fromOverride`
+- `fromStored`
+- `fromFallback`
 
-const cache: PersistentTranslationCache = {
-  async get(key) {
-    return undefined;
-  },
-  async set(key, value) {
-    // store value
-  },
-};
-```
+## `TranslateOptions`
 
-## OpenAI Pricing (For This Plugin)
+- `sourceLang?: LanguageCode`
+- `targetLang` is method argument
+- `timeoutMs?: number` (default `4000`)
+- `preserveFormatting?: boolean` (default `true`)
+- `context?: string`
+- `tenantId?: string` (used in server mode)
 
-The default model in this plugin is `gpt-4o-mini`.
+## `TranslatorConfig` (`createTranslator`)
 
-From OpenAI pricing page (verified on **February 27, 2026**):
+- `apiKey: string` (required)
+- `model?: string` (default `gpt-4o-mini`)
+- `dangerouslyAllowBrowser?: boolean` (default `false`)
+- `defaultSourceLang?: LanguageCode`
+- `cacheTtlMs?: number`
+- `maxCacheSize?: number`
+- `supportedLanguages?: LanguageCode[]`
+- `persistentCache?: PersistentTranslationCache`
+- `onError?: (err, { text, targetLang }) => void`
+- `onCacheError?: (err, { key, operation, cacheLayer, text, targetLang }) => void`
+- `onUsage?: (usage) => void`
+
+## `ServerTranslatorConfig` (`createServerTranslator`)
+
+Top-level:
+
+- `apiKey?: string` (required unless custom `provider` is supplied)
+- `provider?: TranslationProvider`
+- `model?: string`
+- `dangerouslyAllowBrowser?: boolean`
+- `defaultSourceLang?: LanguageCode`
+- `cacheTtlMs?: number`
+- `maxCacheSize?: number`
+- `supportedLanguages?: LanguageCode[]`
+- `onError?: (err, { text, targetLang }) => void`
+- `onCacheError?: (err, { key, operation, cacheLayer, text, targetLang }) => void`
+- `onUsage?: (usage) => void`
+- `environment?: "dev" | "prod"` (default `dev`)
+- `distributedCache?: DistributedTranslationCache`
+- `closeDistributedCacheOnShutdown?: boolean` (default `false`)
+- `database: ServerDatabaseConfig` (required)
+
+`ServerDatabaseConfig`:
+
+- `type: "postgres" | "mysql" | "sqlite"`
+- `connectionString?: string` (required if `client` not provided)
+- `client?: Knex` (existing knex client)
+- `autoCreateTables?: boolean` (default `false`)
+- `tableNames?: { translations?: string; overrides?: string }`
+- `tenancy?: { enabled?: boolean; requireTenantId?: boolean; defaultTenantId?: string }`
+- `pool?: { min?: number; max?: number; acquireTimeoutMillis?: number; idleTimeoutMillis?: number }`
+
+Prod safeguard:
+
+- if `environment="prod"` and `autoCreateTables=true`, `init()` throws.
+- run DB migrations separately using the scaffolding in `migrations/`.
+
+## Server SQL Schema
+
+When `autoCreateTables=true`, the package ensures two tables exist.
+
+### `translation_records`
+
+- `id` big auto-increment primary key
+- `tenant_key` not null, default `__global__`
+- `source_lang` not null
+- `target_lang` not null
+- `source_text` not null
+- `context_key` not null, default `""`
+- `translated_text` not null
+- `model` nullable
+- `created_at`, `updated_at`
+- unique composite key on: `(tenant_key, source_lang, target_lang, source_text, context_key)`
+- index on: `(tenant_key, target_lang)`
+
+### `translation_overrides`
+
+- `id` big auto-increment primary key
+- `tenant_key` not null, default `__global__`
+- `source_lang` not null
+- `target_lang` not null
+- `source_text` not null
+- `context_key` not null, default `""`
+- `override_text` not null
+- `updated_by` nullable
+- `created_at`, `updated_at`
+- unique composite key on: `(tenant_key, source_lang, target_lang, source_text, context_key)`
+- index on: `(tenant_key, target_lang)`
+
+## DB Driver Notes
+
+`knex` is included. Runtime DB drivers are optional peers:
+
+- postgres: `pg`
+- mysql: `mysql2`
+- sqlite: `sqlite3`
+- redis (optional distributed cache): `redis`
+
+Install the one your app uses.
+
+## OpenAI Pricing (gpt-4o-mini)
+
+Verified from OpenAI pricing page on **February 27, 2026**:
 
 - Input: **$0.15 / 1M tokens**
 - Cached input: **$0.075 / 1M tokens**
@@ -261,89 +331,19 @@ Source:
 
 - https://platform.openai.com/pricing
 
-Note:
+Pricing may change; always verify the pricing page.
 
-- Pricing can change; always verify on the pricing page.
-- Exact remaining account credit is not available from this plugin call flow.
-- Use OpenAI Billing dashboard for exact remaining balance.
+## Migrations (Production)
 
-## Smoke Test Script
+Use SQL scaffolding:
 
-A local smoke script exists at `scripts/smoke.ts`.
+- `migrations/postgres/0001_translation_tables.sql`
+- `migrations/mysql/0001_translation_tables.sql`
+- `migrations/sqlite/0001_translation_tables.sql`
 
-Run:
+Reference guide: `migrations/README.md`
 
-```bash
-OPENAI_API_KEY=your_key npm run smoke
-```
-
-With custom language/texts:
-
-```bash
-OPENAI_API_KEY=your_key npm run smoke -- fr "Login" "SignUp"
-```
-
-Optional envs for cost estimation in smoke output:
-
-```bash
-OPENAI_PRICE_INPUT_PER_1M=0.15
-OPENAI_PRICE_OUTPUT_PER_1M=0.60
-OPENAI_CREDIT_BUDGET_USD=20
-```
-
-## Error Handling and Fallbacks
-
-- Provider failure: returns original text and triggers `onError`.
-- Persistent cache read/write failure: translation continues and triggers `onCacheError`.
-- Invalid language code: throws explicit validation error.
-
-## Common Troubleshooting
-
-### 1) Browser error: `OpenAIError: running in a browser-like environment`
-
-Cause: OpenAI client used in browser without browser opt-in.
-
-Fix:
-
-- Set `dangerouslyAllowBrowser: true` (POC only), or
-- Use backend endpoint pattern.
-
-### 2) Vite error: `node:crypto has been externalized`
-
-Cause: Old plugin build using Node crypto.
-
-Fix:
-
-- Reinstall latest plugin build/tag.
-- Current implementation uses browser-safe hashing.
-
-### 3) Always getting English text back
-
-Cause: Provider call failed and fallback returned source text.
-
-Fix:
-
-- Add `onError` logger to inspect root cause (key, quota, model access, timeout).
-
-### 4) Git tag install error: `git reference could not be found`
-
-Cause: Tag not pushed to remote.
-
-Fix:
-
-```bash
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
-```
-
-## Security Guidance
-
-- Never commit API keys.
-- Keep `.env` out of git.
-- Prefer server-side key usage.
-- If forced into client-only mode, use restricted/rotated keys and treat as temporary.
-
-## Development
+## Local Validation
 
 ```bash
 npm install
@@ -351,14 +351,31 @@ npm test
 npm run build
 ```
 
-## Project Scripts
+Smoke test:
 
-- `npm run build` - compile TypeScript to `dist/`
-- `npm test` - run vitest tests
-- `npm run test:watch` - watch-mode tests
-- `npm run smoke` - live translation smoke test
+```bash
+OPENAI_API_KEY=your_key npm run smoke -- es "Login" "SignUp"
+```
 
-## Repository Notes
+Optional cost-estimation vars for smoke script:
 
-- Package name: `@prahalad-nagu/fast-translation-plugin`
-- Repo is currently configured as private (`"private": true` in `package.json`).
+```bash
+OPENAI_PRICE_INPUT_PER_1M=0.15
+OPENAI_PRICE_OUTPUT_PER_1M=0.60
+OPENAI_CREDIT_BUDGET_USD=20
+```
+
+## Troubleshooting
+
+1. Browser OpenAI error (`running in browser-like environment`)
+- set `dangerouslyAllowBrowser: true` for POC, or use backend endpoint.
+
+2. `node:crypto` externalized in Vite
+- install latest package version/tag; hashing is browser-safe in current build.
+
+3. Tag install fails (`git reference could not be found`)
+- push the tag to remote before install.
+
+## Roadmap Note
+
+- MongoDB is intentionally deferred and not included in v1 server mode.

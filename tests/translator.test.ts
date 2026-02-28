@@ -31,6 +31,20 @@ describe("TranslatorService", () => {
     expect(translate).toHaveBeenCalledTimes(1);
   });
 
+  it("returns detailed metadata when translating text", async () => {
+    const { provider, translate } = createMockProvider();
+    translate.mockResolvedValueOnce("Iniciar sesión");
+
+    const translator = new TranslatorService(provider);
+    const result = await translator.translateTextDetailed("Login", "es");
+
+    expect(result.translatedText).toBe("Iniciar sesión");
+    expect(result.origin).toBe("provider");
+    expect(result.fromOverride).toBe(false);
+    expect(result.fromStored).toBe(false);
+    expect(result.fromFallback).toBe(false);
+  });
+
   it("returns cached translation on repeated call", async () => {
     const { provider, translate } = createMockProvider();
     translate.mockResolvedValue("Iniciar sesión");
